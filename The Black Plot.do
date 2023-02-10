@@ -1440,8 +1440,6 @@ collapse (sum) N, by(age sex SEIFA DM nj)
 *Add births
 append using Births_`i'
 
-*append using "G:/Jed/Equity model/Data/Births 2020.dta"
-
 expand 2 if age == 0
 bysort sex age SEIFA DM : replace nj = _n if age == 0
 replace N = 0 if nj == 2 & age == 0

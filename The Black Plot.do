@@ -1,7 +1,8 @@
-****************************************
-*Model preparation (using individual-person data, so most of this cannot be repeated off the sercure server hosting individual-person data). 
-****************************************
+********************************************************************************************************************************************************
+*Model preparation and testing (using individual-person data, so most of this cannot be repeated off the sercure server hosting individual-person data). 
+********************************************************************************************************************************************************
 
+*Model preparation
 {
 
 *NDSS
@@ -55,13 +56,29 @@ bysort SEIFA (age sex) : egen Ba = sum(N) if age > 90
 
 *Genpop prevalence in 2020 by age, sex, and SEIFA. 
 {
+clear
+edit
+*Paste in
+rename seifa SEIFA
+rename a A
+save "G:/Jed/Equity model/Data//AgeIRSDprop.dta"
+
+use "G:/Jed/Equity model/Data//AgeIRSDprop.dta", clear
+expand 5 if age !=85
+expand 16 if age == 85
+bysort sex SEIFA age : replace age = age+_n-1
+save "G:/Jed/Equity model/Data//AgeIRSDprop5.dta", replace
+
 use "G:/Jed/Modelling/Data/AUSpop.dta", clear
-gen prev2020 = (yr2019+yr2020)/10
+gen prev2020 = (yr2019+yr2020)/2
 drop if sex == 0
 keep age sex prev2020
 expand 5
 bysort age sex : gen SEIFA = _n
-*Again, assuming age-specific SEIFA equivalent. 
+merge 1:1 age sex SEIFA using "G:/Jed/Equity model/Data//AgeIRSDprop5.dta"
+drop _merge
+replace prev2020 = prev2020*A
+drop A
 save "G:/Jed/Equity model/Data/genpop 2020.dta", replace
 }
 
@@ -109,12 +126,13 @@ save "G:/Jed/Equity model/Data/DM prevalence `i'.dta", replace
 use "G:/Jed/Modelling/Data/4STpop.dta", clear
 drop if sex == 0
 keep age sex yr`i'
-
-*assume evenly spread across age - not necessarily safe assumption. Come back to. 
-
-replace yr`i' = yr`i'/5
 expand 5
 bysort age sex : gen SEIFA = _n
+merge 1:1 age sex SEIFA using "G:/Jed/Equity model/Data//AgeIRSDprop5.dta"
+drop _merge
+replace yr`i' = yr`i'*A
+drop A
+
 
 merge 1:1 age sex SEIFA using "G:/Jed/Equity model/Data/DM prevalence `i'.dta"
 drop _merge
@@ -538,8 +556,13 @@ use "G:/Jed/Equity model/Data/Births.dta", clear
 keep age sex yr`i'
 rename yr`i' N
 expand 5
-replace N = N/5
 bysort age sex : gen SEIFA = _n
+
+merge 1:1 age sex SEIFA using "G:/Jed/Equity model/Data/AgeIRSDprop.dta"
+keep if _merge == 3
+drop _merge
+replace N = N*A
+drop A
 expand 2
 bysort age sex SEIFA : gen DM = _n-1
 replace N = 0 if DM == 1
@@ -1165,11 +1188,16 @@ graph export "G:/Jed/Equity model/Results/Non-diabetes mortality.pdf", as(pdf) n
 
 }
 
+*Model testing
+{
 
 
-****************************************
+
+}
+
+*******************************************************************************************************************************************************
 *Everything before this was done on a secure server with individual-person data. What follows is the model using only 4 final datasets generated above. 
-****************************************
+*******************************************************************************************************************************************************
 
 cd "/Users/jed/Documents/Equity model"
 
@@ -1225,7 +1253,6 @@ local a17 = rbeta(655.44,143.88)
 local a18 = rbeta(46.27,12.67)
 local a19 = rgamma(61.47,85.35)
 
-*If uncertainty too small, move up
 forval q = 0/99 {
 local RR=`q'
 
@@ -1304,7 +1331,6 @@ replace UT = 0 if nj == 2
 
 gen QALY=UT*YLL
 
-*Attach costs (Needs to be fixed, for now just placeholders)
 *Public only
 gen hccost=.
 replace hccost = `a19' if DM == 0
@@ -1540,7 +1566,7 @@ gen double ABS2DC = ABS2*DC
 collapse (sum) QLYDC-ABS2DC, by(sim RR)
 expand 201 if RR!=0
 bysort sim RR : gen cost = 2*(_n-1)
-bysort sim RR : gen ITCDC = 25529544*cost
+bysort sim RR : gen ITCDC = 25533908*cost
 replace ITCDC=0 if RR == 0
 gen double THCDC = HCCDC+ITCDC
 gen double TTC1DC = NPA1DC+NPD1DC+ABS1DC+THCDC
@@ -1601,7 +1627,7 @@ gen double ABS2DC = ABS2*DC
 collapse (sum) QLYDC-ABS2DC, by(sim RR SEIFA)
 expand 201 if RR!=0
 bysort sim RR SEIFA : gen cost = 2*(_n-1)
-bysort sim RR SEIFA : gen ITCDC = 5105908.7*cost
+bysort sim RR SEIFA : gen ITCDC = 5106781.6*cost
 replace ITCDC=0 if RR == 0
 gen double THCDC = HCCDC+ITCDC
 gen double TTC1DC = NPA1DC+NPD1DC+ABS1DC+THCDC
@@ -1683,7 +1709,7 @@ gen double ABS2DC = ABS2*DC
 collapse (sum) QLYDC-ABS2DC, by(sim RR)
 expand 3 if RR!=0
 bysort sim RR : gen cost = _n*100
-bysort sim RR : gen ITCDC = 25529544*cost
+bysort sim RR : gen ITCDC = 25533908*cost
 replace ITCDC=0 if RR == 0
 gen double THCDC = HCCDC+ITCDC
 gen double TTC1DC = NPA1DC+NPD1DC+ABS1DC+THCDC
@@ -1743,7 +1769,7 @@ gen double ABS2DC = ABS2*DC
 collapse (sum) QLYDC-ABS2DC, by(sim RR SEIFA)
 expand 3 if RR!=0
 bysort sim RR SEIFA : gen cost = _n*100
-bysort sim RR SEIFA : gen ITCDC = 5105908.7*cost
+bysort sim RR SEIFA : gen ITCDC = 5106781.6*cost
 replace ITCDC=0 if RR == 0
 gen double THCDC = HCCDC+ITCDC
 gen double TTC1DC = NPA1DC+NPD1DC+ABS1DC+THCDC
@@ -2286,12 +2312,12 @@ bysort sim (RR) : gen double INCTTC2 = TTC2DC-TTC2DC[1]
 *Check no negative QALYs before proceed
 count if INCQLY < 0
 *STOP
-gen double CETHC = (28000*INCQLY - INCTHC)/25529544
-gen double CSTHC = -INCTHC/25529544
-gen double CETTC1 = (28000*INCQLY - INCTTC1)/25529544
-gen double CSTTC1 = -INCTTC1/25529544
-gen double CETTC2 = (28000*INCQLY - INCTTC2)/25529544
-gen double CSTTC2 = -INCTTC2/25529544
+gen double CETHC = (28000*INCQLY - INCTHC)/25533908
+gen double CSTHC = -INCTHC/25533908
+gen double CETTC1 = (28000*INCQLY - INCTTC1)/25533908
+gen double CSTTC1 = -INCTTC1/25533908
+gen double CETTC2 = (28000*INCQLY - INCTTC2)/25533908
+gen double CSTTC2 = -INCTTC2/25533908
 keep sim RR CETHC-CSTTC2
 matrix CEHC = (.,.,.,.,.)
 matrix CSHC = (.,.,.)
@@ -2352,12 +2378,12 @@ count if INCQLY < 0
 *STOP
 
 
-gen double CETHC = (28000*INCQLY - INCTHC)/5105908.7
-gen double CSTHC = -INCTHC/5105908.7
-gen double CETTC1 = (28000*INCQLY - INCTTC1)/5105908.7
-gen double CSTTC1 = -INCTTC1/5105908.7
-gen double CETTC2 = (28000*INCQLY - INCTTC2)/5105908.7
-gen double CSTTC2 = -INCTTC2/5105908.7
+gen double CETHC = (28000*INCQLY - INCTHC)/5106781.6
+gen double CSTHC = -INCTHC/5106781.6
+gen double CETTC1 = (28000*INCQLY - INCTTC1)/5106781.6
+gen double CSTTC1 = -INCTTC1/5106781.6
+gen double CETTC2 = (28000*INCQLY - INCTTC2)/5106781.6
+gen double CSTTC2 = -INCTTC2/5106781.6
 
 
 keep sim RR SEIFA CETHC-CSTTC2
@@ -2431,7 +2457,7 @@ collapse (sum) QLYDC-ABS2DC, by(sim RR)
 expand 3 if RR!=0
 
 bysort sim RR : gen cost = _n*100
-gen ITCDC = 25529544*cost
+gen ITCDC = 25533908*cost
 replace ITCDC=0 if RR == 0
 
 gen double THCDC = HCCDC+ITCDC
@@ -2557,7 +2583,7 @@ collapse (sum) QLYDC-ABS2DC, by(sim RR SEIFA)
 expand 3 if RR!=0
 
 bysort sim RR SEIFA : gen cost = _n*100
-gen ITCDC = 5105908.7*cost
+gen ITCDC = 5106781.6*cost
 replace ITCDC=0 if RR == 0
 
 gen double THCDC = HCCDC+ITCDC
@@ -2719,7 +2745,7 @@ collapse (sum) INC-TTCDC2, by(sim RR)
 expand 3 if RR!=0
 
 bysort sim RR : gen cost = _n*100
-gen ITCDC = 25529544*cost
+gen ITCDC = 25533908*cost
 replace cost = 0 if RR == 0
 replace ITCDC = 0 if RR == 0
 
@@ -2825,7 +2851,7 @@ collapse (sum) INC-TTCDC2, by(sim RR SEIFA)
 expand 3 if RR!=0
 
 bysort sim RR SEIFA : gen cost = _n*100
-gen ITCDC = 5105908.7*cost
+gen ITCDC = 5106781.6*cost
 replace cost = 0 if RR == 0
 replace ITCDC = 0 if RR == 0
 

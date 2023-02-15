@@ -1192,6 +1192,442 @@ graph export "G:/Jed/Equity model/Results/Non-diabetes mortality.pdf", as(pdf) n
 {
 
 
+*Diabetes prevalence in 2015 by age, sex, and SEIFA. 
+{
+use "G:/Jed/Equity model/Data/NDSS.dta", clear
+keep if dod > td(31,12,2014)
+
+merge 1:1 aihw using "G:/Jed/Modelling/Data/Exitry.dta"
+keep if _merge == 3
+drop _merge
+
+drop if exitry2!=. | (exitry!=. & entry2==.)
+drop if exitry!=. & entry2==.
+
+keep if regdate <= td(31,12,2014) & entry <= td(31,12,2014)
+
+
+merge 1:1 aihw using "G:/Jed/Trends in GLD use/Datasets/PPN IRSD PC.dta"
+*N=5,863 for whom no SEIFA information
+keep if _merge == 3
+drop _merge
+
+gen age = (td(31,12,2014)-dob)/365.25
+replace age = round(age,1)
+
+gen N = 1
+replace age = 100 if age > 100
+
+collapse (sum) N, by(age sex SEIFA)
+
+*Convert to total Aus
+replace N = N*1.25
+
+drop if age >= 120
+
+save "G:/Jed/Equity model/Data/DMprevpop2015.dta", replace
+
+*Sanity checks
+su(N), detail
+di r(sum)
+bysort SEIFA : egen A = sum(N)
+ta A SEIFA
+bysort SEIFA (age sex) : egen Aa = sum(N) if age < 40
+bysort SEIFA (age sex) : egen Ba = sum(N) if age > 90
+br
+}
+
+
+*Genpop prevalence in 2015 by age, sex, and SEIFA. 
+{
+
+use "G:/Jed/Modelling/Data/AUSpop.dta", clear
+gen prev2015 = (yr2014+yr2015)/2
+drop if sex == 0
+keep age sex prev2015
+expand 5
+bysort age sex : gen SEIFA = _n
+merge 1:1 age sex SEIFA using "G:/Jed/Equity model/Data/AgeIRSDprop5.dta"
+drop _merge
+replace prev2015 = prev2015*A
+drop A
+save "G:/Jed/Equity model/Data/genpop 2015.dta", replace
+}
+
+*Total prevalence in 2015 by diabetes status, age, sex, and SEIFA
+{
+use "G:/Jed/Equity model/Data/genpop 2015.dta", clear
+merge 1:1 age sex SEIFA using "G:/Jed/Equity model/Data/DMprevpop2015.dta"
+drop _merge
+replace N = 0 if N==.
+gen noDM = prev2015-N
+rename N DMN
+
+expand 2
+bysort age sex SEIFA : gen DM = _n-1
+gen N = noDM if DM == 0
+replace N = DMN if DM == 1
+keep age sex SEIFA DM N
+
+save "G:/Jed/Equity model/Data/prevpop2015.dta", replace
+}
+
+
+
+*Diabetes incidence rate 2015-2019 by age, sex, and SEIFA.
+{
+
+
+*Predicted incidence
+use "G:/Jed/Equity model/Data/Denominator.dta", clear
+merge 1:1 age sex SEIFA year using "G:/Jed/Equity model/Data/Numerator.dta"
+drop _merge
+replace N = 0 if missing(N)
+replace age = age + 0.5
+mkspline agesp = age, cubic knots(10(10)90)
+
+forval i = 1/5 {
+forval ii = 1/2 {
+poisson N agesp* year if SEIFA == `i' & sex == `ii', exposure(denom)
+predict rate_`i'_`ii' if SEIFA == `i' & sex == `ii', ir
+predict errr_`i'_`ii' if SEIFA == `i' & sex == `ii', stdp
+}
+}
+
+gen rate =.
+gen errr=.
+forval i = 1/5 {
+forval ii = 1/2 {
+replace rate = rate_`i'_`ii' if SEIFA == `i' & sex == `ii'
+replace errr = errr_`i'_`ii' if SEIFA == `i' & sex == `ii'
+
+}
+}
+
+drop rate_1_1-errr_5_2
+
+replace age = age - 0.5 
+
+keep age sex SEIFA rate errr year
+
+gen DM = 0
+
+forval i= 2015/2019 {
+preserve
+keep if year == `i'
+save "G:/Jed/Equity model/Data/DMINC`i'.dta", replace
+restore
+}
+
+
+}
+
+*Diabetes mortality rate in 2015-2019 by age, sex, and SEIFA.
+{
+
+
+clear
+set obs 91
+gen age = _n+9
+expand 2
+bysort age : gen sex = _n
+expand 5
+bysort age sex : gen SEIFA = _n
+expand 5
+bysort age sex SEIFA : gen year = _n+2014
+merge 1:1 age sex SEIFA year using "G:/Jed/Equity model/Data/DM prevalence.dta"
+replace N = 0.1 if missing(N)
+drop _merge
+merge 1:1 age sex SEIFA year using "G:/Jed/Equity model/Data/DM deaths.dta"
+replace deaths = 0 if missing(deaths)
+drop _merge
+
+replace age = age + 0.5
+mkspline agesp = age, cubic knots(0 30(10)90)
+
+forval i = 1/5 {
+forval ii = 1/2 {
+poisson deaths agesp* year if SEIFA == `i' & sex == `ii', exposure(N)
+predict rate_`i'_`ii' if SEIFA == `i' & sex == `ii', ir
+predict errr_`i'_`ii' if SEIFA == `i' & sex == `ii', stdp
+}
+}
+
+gen rate =.
+gen errr=.
+forval i = 1/5 {
+forval ii = 1/2 {
+replace rate = rate_`i'_`ii' if SEIFA == `i' & sex == `ii'
+replace errr = errr_`i'_`ii' if SEIFA == `i' & sex == `ii'
+
+}
+}
+
+drop rate_1_1-errr_5_2
+replace age = age - 0.5 
+gen DM = 1
+
+forval i= 2015/2019 {
+preserve
+keep if year == `i'
+keep age sex SEIFA rate errr
+save "G:/Jed/Equity model/Data/DMMORT`i'.dta", replace
+restore
+}
+
+forval i= 2015/2019 {
+use "G:/Jed/Equity model/Data/NODMMORT.dta", clear
+append using "G:/Jed/Equity model/Data/DMMORT`i'.dta"
+recode DM .=1
+save "G:/Jed/Equity model/Data/AllMORT`i'.dta", replace
+}
+
+
+
+}
+
+
+
+
+
+
+*Model
+{
+set rmsg on
+
+set seed 93820056
+
+tempname atuin
+
+postfile `atuin' double(year SEIFA age sex INC DTD) using "G:/Jed/Equity model/Data/good4u.dta", replace
+
+quietly {
+
+
+use "G:/Jed/Equity model/Data/prevpop2015.dta", clear
+
+
+forval i = 2015/2019 {
+local year = `i'
+
+su(N)
+replace N = N*(1+(225000/r(sum)))
+
+merge m:1 age sex SEIFA DM using "G:/Jed/Equity model/Data/DMINC`i'.dta"
+drop errr _merge
+gen TP = 1-exp(-rate)
+gen DMINC = TP*N
+bysort age sex SEIFA (DM) : replace N = N+DMINC[_n-1] if DM==1 & DMINC[_n-1]!=.
+replace N = N-DMINC if DM==0 & DMINC!=.
+drop rate TP
+
+*Death
+merge m:1 age sex SEIFA DM using "G:/Jed/Equity model/Data/AllMORT`i'.dta"
+drop errr _merge
+gen TP = 1-exp(-rate)
+gen Death = TP*N
+replace N = N-Death if Death!=.
+drop rate TP
+
+
+*Do all the tracking
+forval ii = 1/5 {
+forval iii = 10/100 {
+forval iiii = 1/2 {
+local j = `iii'+0.9
+local SEIFA = `ii'
+local age = `iii'
+local sex = `iiii'
+su(DMINC) if SEIFA == `ii' & inrange(age,`iii',`j') & sex == `iiii'
+local INC = r(sum)
+su(Death) if SEIFA == `ii' & DM == 1 & inrange(age,`iii',`j') & sex == `iiii'
+local DTD = r(sum)
+post `atuin' (`year') (`SEIFA') (`age') (`sex') (`INC') (`DTD')
+}
+}
+}
+
+
+*Age a year
+drop DMINC Death
+replace age = age+1 if age < 100
+collapse (sum) N, by(age sex SEIFA DM)
+
+*Add births
+append using "G:/Jed/Equity model/Data/Births 2020.dta"
+
+
+}
+
+
+postclose `atuin'
+
+}
+
+}
+
+
+*Real data
+{
+
+*Diabetes incidence
+clear
+gen year = .
+forval i = 2015/2019 {
+append using "G:/Jed/Equity model/Data/Numerator `i'.dta"
+recode year .=`i'
+}
+
+*To match overall
+replace N = N*1.25
+
+save "G:/Jed/Equity model/Data/Diabincreal1519.dta", replace
+
+use "G:/Jed/Equity model/Data/DM deaths.dta", clear
+replace deaths = deaths*1.25
+save "G:/Jed/Equity model/Data/Diabdeathreal1519.dta", replace
+
+
+
+
+}
+
+*Comparison real vs. modelled
+{
+
+forval i = 2015/2019 {
+forval ii = 1/2 {
+
+if `ii' == 1 {
+use "G:/Jed/Miscellaneous/Viridis.dta", clear
+local col1 = var6[6]
+local col2 = var6[5]
+local col3 = var6[4]
+local col4 = var6[3]
+local col5 = var6[2]
+local s = "Males"
+}
+else {
+use "G:/Jed/Miscellaneous/Inferno.dta", clear
+local col1 = var6[6]
+local col2 = var6[5]
+local col3 = var6[4]
+local col4 = var6[3]
+local col5 = var6[2]
+local s = "Females"
+}
+
+
+use "G:/Jed/Equity model/Data/good4u.dta", clear
+merge 1:1 year sex age SEIFA using "G:/Jed/Equity model/Data/Diabincreal1519.dta"
+drop _merge
+recode N .=0
+drop if N < 6
+twoway ///
+(line INC age if year == `i' & SEIFA == 1 & sex == `ii', col("`col1'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 1 & sex == `ii', col("`col1'") msymbol(O) msize(small)) ///
+(line INC age if year == `i' & SEIFA == 2 & sex == `ii', col("`col2'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 2 & sex == `ii', col("`col2'") msymbol(O) msize(small)) ///
+(line INC age if year == `i' & SEIFA == 3 & sex == `ii', col("`col3'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 3 & sex == `ii', col("`col3'") msymbol(O) msize(small)) ///
+(line INC age if year == `i' & SEIFA == 4 & sex == `ii', col("`col4'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 4 & sex == `ii', col("`col4'") msymbol(O) msize(small)) ///
+(line INC age if year == `i' & SEIFA == 5 & sex == `ii', col("`col5'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 5 & sex == `ii', col("`col5'") msymbol(O) msize(small)) ///
+, graphregion(color(white)) xtitle(Age) ytitle("Incident diabetes cases (N)") ///
+ylabel(, angle(0)) legend(order(1 "5 - Model" 2 "5 - Actual" ///
+3 "4 - Model" 4 "4 - Actual" ///
+5 "3 - Model" 6 "3 - Actual" ///
+7 "2 - Model" 8 "2 - Actual" ///
+9 "1 - Model" 10 "1 - Actual") position(3) col(2) region(lcolor(white) color(none))) ///
+title("`i' - `s'", color(black) placement(west) size(medium))
+graph save "Graph" Modeltest`i'`ii'inc, replace
+}
+
+}
+
+
+forval i = 2015/2019 {
+forval ii = 1/2 {
+
+if `ii' == 1 {
+use "G:/Jed/Miscellaneous/Viridis.dta", clear
+local col1 = var6[6]
+local col2 = var6[5]
+local col3 = var6[4]
+local col4 = var6[3]
+local col5 = var6[2]
+local s = "Males"
+}
+else {
+use "G:/Jed/Miscellaneous/Inferno.dta", clear
+local col1 = var6[6]
+local col2 = var6[5]
+local col3 = var6[4]
+local col4 = var6[3]
+local col5 = var6[2]
+local s = "Females"
+}
+
+
+use "G:/Jed/Equity model/Data/good4u.dta", clear
+merge 1:1 year sex age SEIFA using "G:/Jed/Equity model/Data/Diabdeathreal1519.dta"
+drop _merge
+rename deaths N
+recode N .=0
+drop if N < 6
+twoway ///
+(line DTD age if year == `i' & SEIFA == 1 & sex == `ii', col("`col1'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 1 & sex == `ii', col("`col1'") msymbol(O) msize(small)) ///
+(line DTD age if year == `i' & SEIFA == 2 & sex == `ii', col("`col2'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 2 & sex == `ii', col("`col2'") msymbol(O) msize(small)) ///
+(line DTD age if year == `i' & SEIFA == 3 & sex == `ii', col("`col3'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 3 & sex == `ii', col("`col3'") msymbol(O) msize(small)) ///
+(line DTD age if year == `i' & SEIFA == 4 & sex == `ii', col("`col4'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 4 & sex == `ii', col("`col4'") msymbol(O) msize(small)) ///
+(line DTD age if year == `i' & SEIFA == 5 & sex == `ii', col("`col5'") msymbol(S) msize(small)) ///
+(scatter N age if year == `i' & SEIFA == 5 & sex == `ii', col("`col5'") msymbol(O) msize(small)) ///
+, graphregion(color(white)) xtitle(Age) ytitle("Diabetes deaths (N)") ///
+ylabel(, angle(0)) legend(order(1 "5 - Model" 2 "5 - Actual" ///
+3 "4 - Model" 4 "4 - Actual" ///
+5 "3 - Model" 6 "3 - Actual" ///
+7 "2 - Model" 8 "2 - Actual" ///
+9 "1 - Model" 10 "1 - Actual") position(3) col(2) region(lcolor(white) color(none))) ///
+title("`i' - `s'", color(black) placement(west) size(medium))
+graph save "Graph" Modeltest`i'`ii'dtd, replace
+}
+}
+
+
+
+graph combine ///
+Modeltest20151inc.gph Modeltest20152inc.gph ///
+Modeltest20161inc.gph Modeltest20162inc.gph ///
+Modeltest20171inc.gph Modeltest20172inc.gph ///
+Modeltest20181inc.gph Modeltest20182inc.gph ///
+Modeltest20191inc.gph Modeltest20192inc.gph ///
+, altshrink cols(2) graphregion(color(white)) xsize(5)
+ graph export "G:\Jed\Equity model\Results\Modeltestinc.pdf", as(pdf) name("Graph") replace
+
+
+
+graph combine ///
+Modeltest20151dtd.gph Modeltest20152dtd.gph ///
+Modeltest20161dtd.gph Modeltest20162dtd.gph ///
+Modeltest20171dtd.gph Modeltest20172dtd.gph ///
+Modeltest20181dtd.gph Modeltest20182dtd.gph ///
+Modeltest20191dtd.gph Modeltest20192dtd.gph ///
+, altshrink cols(2) graphregion(color(white)) xsize(5)
+ graph export "G:\Jed\Equity model\Results\Modeltestdtd.pdf", as(pdf) name("Graph") replace
+
+
+
+
+}
+
+
+
+
 
 }
 
